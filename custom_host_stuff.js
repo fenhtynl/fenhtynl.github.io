@@ -32,8 +32,8 @@ function onload_setup() {
     let menu_overlay = document.getElementById("menu-overlay");
     let menu = document.getElementById("menu-bar-wrapper");
 
-    if (localStorage.getItem("wk_exploit_type") == null) {
-        localStorage.setItem("wk_exploit_type", "psfree");
+    if (localStorage.getItem("wk_exploit_type") == null || localStorage.getItem("wk_exploit_type") == "psfree") {
+        localStorage.setItem("wk_exploit_type", "fontface");
     }
 
     create_redirector_buttons();
