@@ -24,7 +24,7 @@ const err_strings = {
 // --- Globals (defaults for browser testing) ---
 var TITLE_ID = TITLE_ID || "";
 var PLATFORM = PLATFORM || "PS5";
-var FW_VERSION = FW_VERSION || "0.00";
+var FW_VERSION = "12.70";
 var EBOOT_BASE = EBOOT_BASE || 0;
 var SCE_KERNEL_DLSYM = SCE_KERNEL_DLSYM || 0;
 var SHELLCODE_BASE = SHELLCODE_BASE || 0;
