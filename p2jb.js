@@ -256,10 +256,6 @@ function build_worker_chain(ws, wid, fd, iov_ptr, sysnum) {
 function p2jb() {
     send_notification(p2jb_version_string);
 
-    if (typeof TITLE_ID === "undefined" || !TITLE_ID) {
-        throw new Error("Update Luac0re to at least 2.3 version");
-    }
-
     if (PLATFORM !== "PS5") {
         send_notification("Unsupported platform  " + PLATFORM);
         return;
