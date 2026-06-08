@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PS5 12.70 WebKit Info Leak</title>
+    <style>
+        body { 
+            background-color: #0f0f0f; 
+            color: #00ff00; 
+            font-family: 'Courier New', Courier, monospace; 
+            padding: 20px; 
+            font-size: 16px;
+        }
+        h1 { color: #ffffff; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        #log { 
+            white-space: pre-wrap; 
+            word-wrap: break-word; 
+            margin-top: 20px;
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #333;
+            min-height: 400px;
+        }
+        .error { color: #ff3333; }
+        .success { color: #33cc33; }
+        .warning { color: #ffcc00; }
+    </style>
+</head>
+<body>
+    <h1>PS5 12.70 WebKit Info Leak (WASM OOB)</h1>
+    <p>Target: PS5 Firmware 12.00 - 12.70</p>
+    <div id="log"><span class="warning">[!] Initializing WASM JIT Exploit Framework...</span><br></div>
+    
+    <script src="exploit.js"></script>
+</body>
+</html>
