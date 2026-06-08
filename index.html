@@ -198,7 +198,7 @@ async function buildReadWriteChain() {
     // Scan for font objects on 12.70
     // Memory-efficient: clean up between rounds so PS5 doesn't OOM
     // Region-hopping: try each 256MB region briefly, then skip ahead
-    var guf = 0x200000000;
+    var guf = 0x100000000;
     var ite = true;
     var matches = 0;
     var round = 0;
@@ -284,8 +284,8 @@ async function buildReadWriteChain() {
             await sleep(0);
         }
 
-        // Safety: abort after scanning ~8GB of address space
-        if (guf > 0x400000000) {
+        // Safety: abort after scanning ~32GB of address space
+        if (guf > 0x800000000) {
             log("[-] Scanned full range, not found.");
             setStatus("FAILED — address not found");
             return;
