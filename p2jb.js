@@ -3,7 +3,7 @@
 // Ported mechanically from Lua to JavaScript for WebKit integration
 // =============================================================================
 
-"use strict";
+
 
 let shellcode = null; // assigned at bottom of file
 
@@ -18,30 +18,49 @@ const err_strings = {
 };
 
 // =============================================================================
-// Runtime API stubs — these must be provided by the hosting WebKit environment
-// or bound from native. They mirror the LuaC0re runtime functions.
+// Runtime API stubs — browser-compatible replacements for LuaC0re functions
 // =============================================================================
 
-// The following globals are expected from the runtime:
-//   TITLE_ID, PLATFORM, FW_VERSION, EBOOT_BASE, SCE_KERNEL_DLSYM,
-//   SHELLCODE_BASE, AF_INET6, SOCK_STREAM, LOG_SERVER, log_sock,
-//   version_string
-//
-// The following functions are expected from the runtime:
-//   send_notification(msg)
-//   is_jailbroken()
-//   get_nidpath()
-//   file_exists(path)
-//   file_write(path, content)
-//   init_dlsym()
-//   write_shellcode(base, sc)
-//   func_wrap(base) -> callable
-//   malloc(size) -> address
-//   write64(addr, val)
-//   write32(addr, val)
-//   create_socket(family, type, protocol) -> fd
-//   show_dialog(msg)
-//   get_current_ip() -> string|null
+// --- Globals (defaults for browser testing) ---
+var TITLE_ID = TITLE_ID || "";
+var PLATFORM = PLATFORM || "PS5";
+var FW_VERSION = FW_VERSION || "0.00";
+var EBOOT_BASE = EBOOT_BASE || 0;
+var SCE_KERNEL_DLSYM = SCE_KERNEL_DLSYM || 0;
+var SHELLCODE_BASE = SHELLCODE_BASE || 0;
+var AF_INET6 = AF_INET6 || 30;
+var SOCK_STREAM = SOCK_STREAM || 1;
+var LOG_SERVER = LOG_SERVER || "127.0.0.2";
+var log_sock = (typeof log_sock !== "undefined") ? log_sock : -1;
+var version_string = version_string || "Luac0re";
+
+// --- Status log (displays on page) ---
+function _logToPage(msg) {
+    var el = document.getElementById("p2jb-log");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "p2jb-log";
+        el.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:#000;color:#0f0;font:14px monospace;padding:20px;overflow-y:auto;z-index:9999;white-space:pre-wrap;";
+        document.body.appendChild(el);
+    }
+    el.textContent += msg + "\n";
+}
+
+function send_notification(msg) { _logToPage("[NOTIFY] " + msg); }
+function show_dialog(msg) { _logToPage("[DIALOG] " + msg); }
+function is_jailbroken() { return false; }
+function get_nidpath() { return "data"; }
+function file_exists(path) { return false; }
+function file_write(path, content) { _logToPage("[FILE] write: " + path); }
+function init_dlsym() { _logToPage("[DLSYM] init"); }
+var sceKernelDlsym = true;
+function write_shellcode(base, sc) { _logToPage("[SC] shellcode written to 0x" + base.toString(16)); }
+function func_wrap(base) { return function() { _logToPage("[SC] shellcode exec stub"); return -1; }; }
+function malloc(size) { return 0x41414141; }
+function write64(addr, val) {}
+function write32(addr, val) {}
+function create_socket(family, type, proto) { return 3; }
+function get_current_ip() { return null; }
 
 // =============================================================================
 // Main p2jb function
