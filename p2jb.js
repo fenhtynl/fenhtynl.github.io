@@ -52,15 +52,159 @@ function is_jailbroken() { return false; }
 function get_nidpath() { return "data"; }
 function file_exists(path) { return false; }
 function file_write(path, content) { _logToPage("[FILE] write: " + path); }
-function init_dlsym() { _logToPage("[DLSYM] init"); }
+function init_dlsym() { 
+    if (typeof p !== "undefined" && typeof p.dlsym_init === "function") {
+        p.dlsym_init(); 
+    }
+}
 var sceKernelDlsym = true;
-function write_shellcode(base, sc) { _logToPage("[SC] shellcode written to 0x" + base.toString(16)); }
-function func_wrap(base) { return function() { _logToPage("[SC] shellcode exec stub"); return -1; }; }
-function malloc(size) { return 0x41414141; }
-function write64(addr, val) {}
-function write32(addr, val) {}
-function create_socket(family, type, proto) { return 3; }
-function get_current_ip() { return null; }
+
+function write_shellcode(base, sc) { 
+    _logToPage("[SC] writing shellcode to 0x" + base.toString(16));
+    if (typeof p !== "undefined") {
+        for (let i = 0; i < sc.length; i += 2) {
+            let byte = parseInt(sc.substr(i, 2), 16);
+            p.write1(base + (i / 2), byte);
+        }
+    }
+}
+
+function func_wrap(base) { 
+    return function(a1, a2, a3, a4, a5) { 
+        if (typeof p !== "undefined" && typeof p.fcall === "function") {
+            return p.fcall(base, a1, a2, a3, a4, a5);
+        }
+        _logToPage("[SC] shellcode exec stub called");
+        return -1;
+    }; 
+}
+
+function malloc(size) { 
+    if (typeof p !== "undefined") return p.malloc(size);
+    return 0x41414141; 
+}
+
+function write64(addr, val) { 
+    if (typeof p !== "undefined") p.write8(addr, val); 
+}
+
+function write32(addr, val) { 
+    if (typeof p !== "undefined") p.write4(addr, val); 
+}
+
+function create_socket(family, type, proto) { 
+    if (typeof p !== "undefined") {
+        // sys_socket is syscall 97
+        return p.syscall(97, family, type, proto).low;
+    }
+    return 3; 
+}
+
+function get_current_ip() { 
+    return "127.0.0.1"; // Fallback IP
+}
+
+// === INJECTED MEMORY OFFSETS & CONSTANTS ===
+let wasm_rwx_memory_address = 0; // Placeholder to be resolved during WebKit execution
+
+const EXTRA_SYSCALLS = {
+    "recvmsg":            0x1B,
+    "socketpair":         0x87,
+    "kqueue":             0x16A,
+    "kqueueex":           0x8D,
+    "readv":              0x78,
+    "writev":             0x79,
+    "setrlimit":          0xC3,
+    "getrlimit":          0xC2,
+    "mprotect":           0x4A,
+    "munmap":             0x49,
+    "umtx_op":            0x1C6,
+    "fcntl":              0x5C,
+    "ioctl":              0x36,
+    "cpuset_setaffinity": 0x1E8,
+    "cpuset_getaffinity": 0x1E7,
+    "rtprio_thread":      0x1D2,
+    "sched_yield":        0x14B,
+    "setuid":             0x17,
+    "open":               0x5,
+    "close":              0x6,
+    "read":               0x3,
+    "write":              0x4,
+    "thr_new":            0x1C7,
+    "thr_exit":           0x1AF,
+    "getsockopt":         0x76,
+    "jitshm_create":      0x215,
+    "jitshm_alias":       0x216,
+    "mmap":               0xCC,
+    "nanosleep":          0xF0,
+    "dlsym":              0x24F,
+    "kill":               0x25,
+    "getpid":             0x14,
+};
+
+const FW_OFFSETS_P2JB = {
+    "9.00":  {"DATA_BASE_ALLPROC":           0x02755D50, "DATA_BASE_SECURITY_FLAGS":    0x00D72064, "DATA_BASE_KERNEL_PMAP_STORE": 0x02D28B78, "DATA_BASE_GVMSPACE":          0x02D8A570},
+    "9.05":  {"DATA_BASE_ALLPROC":           0x02755D50, "DATA_BASE_SECURITY_FLAGS":    0x00D73064, "DATA_BASE_KERNEL_PMAP_STORE": 0x02D28B78, "DATA_BASE_GVMSPACE":          0x02D8A570},
+    "10.00": {"DATA_BASE_ALLPROC":           0x02765D70, "DATA_BASE_SECURITY_FLAGS":    0x00D79064, "DATA_BASE_KERNEL_PMAP_STORE": 0x02CF0EF8, "DATA_BASE_GVMSPACE":          0x02D52570},
+    "11.00": {"DATA_BASE_ALLPROC":           0x02875D70, "DATA_BASE_SECURITY_FLAGS":    0x00D8C064, "DATA_BASE_KERNEL_PMAP_STORE": 0x02E04F18, "DATA_BASE_GVMSPACE":          0x02E66570},
+    "12.00": {"DATA_BASE_ALLPROC":           0x02885E00, "DATA_BASE_SECURITY_FLAGS":    0x00D83064, "DATA_BASE_KERNEL_PMAP_STORE": 0x02E1CFB8, "DATA_BASE_GVMSPACE":          0x02E7E570},
+};
+
+const KOFF = {
+    "PROC_PID":           0xBC,
+    "PROC_UCRED":         0x40,
+    "PROC_FD":            0x48,
+    "UCRED_CR_UID":       0x04,
+    "UCRED_CR_RUID":      0x08,
+    "UCRED_CR_SVUID":     0x0C,
+    "UCRED_CR_NGROUPS":   0x10,
+    "UCRED_CR_RGID":      0x14,
+    "UCRED_CR_SVGID":     0x18,
+    "UCRED_CR_SCEAUTHID": 0x58,
+    "UCRED_CR_SCECAPS0":  0x60,
+    "UCRED_CR_SCECAPS1":  0x68,
+    "FILEDESC_OFILES":    0x00,
+    "FDESCENTTBL_HDR":    0x08,
+    "FILEDESCENT_SIZE":   0x30,
+    "FD_CDIR":            0x08,
+    "FD_RDIR":            0x10,
+    "FD_JDIR":            0x18,
+    "KQ_FDP":             0xA8,
+    "SO_PCB":             0x18,
+    "INPCB_PKTOPTS":      0x120,
+    "IP6PO_RTHDR":        0x70,
+    "PIPE_SIGIO":         0xD8,
+    "PMAP_PML4":          0x20,
+    "PMAP_CR3":           0x28,
+    "PROC_VM_SPACE":      0x200,
+    "VMSPACE_VM_PMAP":    0,
+    "VMSPACE_VM_VMID":    0,
+    "SIZEOF_GVMSPACE":    0x100,
+    "GVMSPACE_START_VA":  0x8,
+    "GVMSPACE_SIZE":      0x10,
+    "GVMSPACE_PAGE_DIR_VA": 0x38,
+};
+
+// ROP Chain Builder placeholder replacement
+class ROPChain {
+    constructor(sc, size) {
+        this.sc = sc;
+        this.size = size;
+        this.chain = [];
+        this.index = 0;
+        this.addr = 0; // Set when allocated
+    }
+    push_value(val) { this.chain.push(val); this.index += 8; }
+    push_gadget(gadget) { this.push_value(gadget); }
+    push_syscall(sysnum, ...args) { /* syscall builder logic */ }
+}
+
+function build_worker_chain(ws, wid, fd, iov_ptr, sysnum) {
+    let chain = new ROPChain(null, 0x4000);
+    // Placeholder ROP chain build logic for exploit execution
+    return { "chain": chain, "pivot_ctxbuf": 0, "wait_val_slot": 0, "loop_start": 0 };
+}
+
 
 // =============================================================================
 // Main p2jb function
